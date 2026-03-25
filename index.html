@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GLOBAL_NET_v8</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
+        body { background: #000; color: #00ff41; font-family: 'Share Tech Mono', monospace; overflow: hidden; height: 100vh; }
+        canvas { position: fixed; top: 0; left: 0; z-index: -1; }
+        .hacker-panel { border: 1px solid #00ff41; background: rgba(0, 10, 0, 0.9); box-shadow: 0 0 10px rgba(0, 255, 65, 0.2); }
+        .msg-left { align-self: flex-start; background: rgba(0, 255, 65, 0.1); border-left: 3px solid #00ff41; padding: 6px 12px; max-width: 85%; margin-bottom: 5px; }
+        .msg-right { align-self: flex-end; background: rgba(0, 255, 65, 0.3); border-right: 3px solid #fff; color: #fff; padding: 6px 12px; max-width: 85%; text-align: right; margin-bottom: 5px; }
+        input { background: #000 !important; border: 1px solid #004400 !important; color: #00ff41 !important; outline: none; transition: 0.3s; }
+        input:focus { border-color: #00ff41 !important; }
+        .btn { border: 1px solid #00ff41; padding: 5px; cursor: pointer; text-align: center; transition: 0.2s; font-size: 12px; }
+        .btn:hover { background: #00ff41; color: #000; }
+        .room-item { cursor: pointer; border: 1px border-transparent; padding: 5px; transition: 0.2s; border-bottom: 1px solid #003300; }
+        .room-item:hover { background: rgba(0, 255, 65, 0.2); border-color: #00ff41; }
+    </style>
+</head>
+<body class="flex flex-col p-4 h-full">
+
+<canvas id="matrix"></canvas>
+
+<header class="flex justify-between items-center mb-4 border-b border-green-900 pb-2">
+    <div class="flex items-center gap-4">
+        <h1 class="text-xl font-bold tracking-widest neon-text animate-pulse">MATRIX_HUB_v8</h1>
+        <div id="status" class="text-[10px] text-red-500">[DISCONNECTED]</div>
+    </div>
+    <button onclick="toggleMatrix()" class="text-[10px] border border-green-500 px-2">TOGGLE_GFX</button>
+</header>
+
+<div class="flex flex-grow gap-4 overflow-hidden">
+    <div class="w-80 flex flex-col gap-4">
+        <div class="hacker-panel p-3">
+            <label class="text-[10px] opacity-50">USER_ID</label>
+            <input id="userName" type="text" placeholder="Enter Nickname" class="w-full p-1 mb-2">
+            
+            <label class="text-[10px] opacity-50">NEW_UPLINK</label>
+            <input id="newRoomName" type="text" placeholder="Room Name" class="w-full p-1 mb-1">
+            <input id="newRoomPass" type="password" placeholder="Pass (Leave blank for Public)" class="w-full p-1 mb-2">
+            <button onclick="createNewRoom()" class="btn w-full text-white bg-green-900/50">CREATE_&_SAVE_ROOM</button>
+        </div>
+
+        <div class="hacker-panel p-3 flex-grow flex flex-col overflow-hidden">
+            <label class="text-[10px] opacity-70 border-b border-green-900 mb-2">AVAILABLE_CHANNELS (SCROLL)</label>
+            <div id="roomHub" class="overflow-y-auto flex-grow space-y-1 pr-2">
+                <div class="text-[10px] opacity-30 italic">Scanning network...</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="flex-grow hacker-panel flex flex-col relative">
+        <div id="roomDisplay" class="bg-green-950/40 p-1 text-[10px] flex justify-between px-4">
+            <span>CHANNEL: NONE</span>
+            <span id="memberCount">NODES: 0</span>
+        </div>
+        
+        <div id="chatBox" class="flex-grow p-4 overflow-y-auto flex flex-col">
+            <div class="m-auto text-center opacity-20">
+                <p>SELECT A CHANNEL FROM THE HUB</p>
+                <p class="text-[8px]">OR CREATE A NEW ONE TO BEGIN DATA STREAM</p>
+            </div>
+        </div>
+
+        <div class="p-3 border-t border-green-900 flex gap-2 bg-black">
+            <input id="msgInput" type="text" placeholder="Send encrypted packet..." class="flex-grow p-2" disabled>
+            <button onclick="sendMessage()" class="btn px-6">SEND</button>
+        </div>
+    </div>
+</div>
+
+<script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.11.0/firebase-app.js";
+    import { getDatabase, ref, push, onChildAdded, set, get, onValue, off, onDisconnect } from "https://www.gstatic.com/firebasejs/12.11.0/firebase-database.js";
+
+    const firebaseConfig = {
+        apiKey: "AIzaSyC17LQDiQ_C_odiGW5TIT1m_nvZhtjfRUc",
+        authDomain: "hacker-chat-app-ec18b.firebaseapp.com",
+        projectId: "hacker-chat-app-ec18b",
+        databaseURL: "https://hacker-chat-app-ec18b-default-rtdb.asia-southeast1.firebasedatabase.app/",
+        appId: "1:803668294668:web:1de379916a11d0bc2dc229"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
+
+    let currentRoom = null;
+    let myNick = localStorage.getItem('hackerNick') || "User_" + Math.floor(Math.random()*999);
+    document.getElementById('userName').value = myNick;
+
+    // --- 1. THE ROOM HUB (SCROLLABLE LIST) ---
+    onValue(ref(db, 'rooms'), (snapshot) => {
+        const hub = document.getElementById('roomHub');
+        hub.innerHTML = "";
+        const rooms = snapshot.val();
+        
+        if (rooms) {
+            Object.keys(rooms).forEach(roomID => {
+                const isPublic = rooms[roomID].password === "public";
+                const div = document.createElement('div');
+                div.className = "room-item";
+                div.innerHTML = `
+                    <div class="flex justify-between text-xs">
+                        <span class="${isPublic ? 'text-green-400' : 'text-yellow-600'}"># ${roomID}</span>
+                        <span class="text-[8px] opacity-50">${isPublic ? '[OPEN]' : '[LOCKED]'}</span>
+                    </div>
+                `;
+                div.onclick = () => attemptJoin(roomID, rooms[roomID].password);
+                hub.appendChild(div);
+            });
+        }
+    });
+
+    // --- 2. CREATE ROOM ---
+    window.createNewRoom = async () => {
+        const name = document.getElementById('newRoomName').value.trim().replace(/\s+/g, '_');
+        const pass = document.getElementById('newRoomPass').value.trim() || "public";
+        myNick = document.getElementById('userName').value.trim();
+        localStorage.setItem('hackerNick', myNick);
+
+        if(!name) return alert("Enter Room Name");
+        
+        await set(ref(db, 'rooms/' + name), { password: pass, creator: myNick });
+        attemptJoin(name, pass);
+        document.getElementById('newRoomName').value = "";
+        document.getElementById('newRoomPass').value = "";
+    };
+
+    // --- 3. JOIN LOGIC ---
+    async function attemptJoin(roomID, correctPass) {
+        let userPass = "public";
+        if (correctPass !== "public") {
+            userPass = prompt(`ENTER ENCRYPTION KEY FOR [${roomID}]:`);
+        }
+
+        if (userPass === correctPass) {
+            startChat(roomID);
+        } else {
+            alert("ACCESS DENIED: INVALID KEY");
+        }
+    }
+
+    function startChat(roomID) {
+        if(currentRoom) {
+            off(ref(db, `messages/${currentRoom}`));
+            off(ref(db, `members/${currentRoom}`));
+            set(ref(db, `members/${currentRoom}/${myNick}`), null);
+        }
+
+        currentRoom = roomID;
+        myNick = document.getElementById('userName').value.trim();
+        document.getElementById('msgInput').disabled = false;
+        document.getElementById('roomDisplay').firstElementChild.innerText = `CHANNEL: ${roomID.toUpperCase()}`;
+        document.getElementById('status').innerText = "[CONNECTED]";
+        document.getElementById('status').className = "text-[10px] text-green-500";
+        document.getElementById('chatBox').innerHTML = "";
+
+        // Listen for messages
+        onChildAdded(ref(db, `messages/${roomID}`), (data) => {
+            const m = data.val();
+            const isMe = m.user === myNick;
+            const div = document.createElement('div');
+            div.className = isMe ? "msg-right" : "msg-left";
+            div.innerHTML = `<div class="text-[9px] opacity-40">${m.user}</div><div>${m.text}</div>`;
+            document.getElementById('chatBox').appendChild(div);
+            document.getElementById('chatBox').scrollTop = document.getElementById('chatBox').scrollHeight;
+        });
+
+        // Member presence
+        set(ref(db, `members/${roomID}/${myNick}`), true);
+        onDisconnect(ref(db, `members/${roomID}/${myNick}`)).remove();
+        onValue(ref(db, `members/${roomID}`), (s) => {
+            const count = s.val() ? Object.keys(s.val()).length : 0;
+            document.getElementById('memberCount').innerText = `NODES: ${count}`;
+        });
+    }
+
+    window.sendMessage = () => {
+        const input = document.getElementById('msgInput');
+        if(input.value.trim() && currentRoom) {
+            push(ref(db, `messages/${currentRoom}`), { user: myNick, text: input.value });
+            input.value = "";
+        }
+    };
+
+    document.getElementById('msgInput').onkeypress = (e) => { if(e.key === 'Enter') sendMessage(); };
+
+    // Matrix Rain
+    const canvas = document.getElementById('matrix');
+    const ctx = canvas.getContext('2d');
+    let mOn = true;
+    function res() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+    window.onresize = res; res();
+    const drops = Array(Math.floor(canvas.width/16)).fill(1);
+    function draw() {
+        if(!mOn) return;
+        ctx.fillStyle = "rgba(0,0,0,0.08)"; ctx.fillRect(0,0,canvas.width,canvas.height);
+        ctx.fillStyle = "#0F0"; ctx.font = "15px monospace";
+        drops.forEach((y, i) => {
+            ctx.fillText(String.fromCharCode(Math.random()*128), i*16, y*16);
+            if(y*16 > canvas.height && Math.random() > 0.98) drops[i] = 0;
+            drops[i]++;
+        });
+    }
+    setInterval(draw, 50);
+    window.toggleMatrix = () => { mOn = !mOn; if(!mOn) ctx.clearRect(0,0,canvas.width,canvas.height); };
+</script>
+</body>
+</html>
